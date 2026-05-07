@@ -1,7 +1,7 @@
 # Week 12 Day 3 - Knowledge Gap (Training and Post-Training Mechanics)
 
 **Name:** Gersum Asfaw  
-**Submitting to Explainers:** Mistire Daniel  
+**Submitting to Explainers:** On Behalf of Mistire Daniel  
 **Week 10/11 implementation context:** `tenacious-conversion-engine` (LoRA-trained component) and `tenacious-bench`
 
 ## Gap I identified in my Week 10/11 implementation
@@ -18,7 +18,7 @@ So my gap is this: **my rank choice is empirical but not defensible - I cannot s
 
 ## Final research question (precise and concise)
 
-In my Week 10 conversion-engine LoRA component, I chose rank `r` empirically but cannot defend it from mechanism or evidence. How does LoRA rank mathematically constrain adapter capacity, and what minimal experiment on my existing stack (evaluated on tenacious-bench with quality, latency, and cost metrics) is sufficient to justify a specific rank as a production decision rather than a benchmark-only pick?
+In conversion-engine LoRA component, I chose rank `r` empirically but cannot defend it from mechanism or evidence. How does LoRA rank mathematically constrain adapter capacity, and what minimal experiment on my existing stack (evaluated on tenacious-bench with quality, latency, and cost metrics) is sufficient to justify a specific rank as a production decision rather than a benchmark-only pick?
 
 ## Why this gap matters for my implementation
 
