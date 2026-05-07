@@ -1,101 +1,107 @@
-# Day 3 Explainer for Gersum - LoRA Rank as a Production Decision
+# Day 3 Explainer for Mistire - What Q/V LoRA Can and Cannot Change
 
-**Written by:** Mistire Daniel  
-**For:** Gersum Asfaw  
-**Topic:** Training and post-training mechanics  
-**Question:** How does LoRA rank mathematically constrain adapter capacity, and what minimal experiment on `tenacious-bench` would justify a specific rank as a production decision rather than a benchmark-only pick?
+**Written by:** Gersum Asfaw  
+**For:** Mistire Daniel  
+**Topic:** Training and post-training mechanics - LoRA module selection and rank
 
----
+## The Question
+
+Your SimPO run updated only `q_proj` and `v_proj` with LoRA (`r=16`, `alpha=32`). Training loss fell from `0.97` to `0.37`, but held-out pass rate stayed flat at `14.6%` against the untrained baseline. The real question is whether Q/V-only LoRA can learn something real while still failing to change output behavior on a multi-constraint rubric task.
 
 ## Short Answer
 
-LoRA rank is not just a knob for "more training." It is the dimensional bottleneck on the weight update your adapter is allowed to learn. In a normal linear layer, the model uses a frozen weight matrix `W`. LoRA freezes `W` and learns a small update:
+Yes. There is a mechanism-level reason this can happen.
+
+LoRA on `q_proj` and `v_proj` changes **attention routing** and **the content copied through attention**. It does not directly update the key projection, the attention output projection, or the feed-forward network layers where many token-level feature transformations and decision boundaries are expressed. That means a Q/V adapter can reduce training loss by learning prompt-specific associations while still being too narrow to change held-out rubric behavior such as constraint following, refusal, evidence discipline, or scoring consistency.
+
+## What Q, K, V, and O Do
+
+Inside attention, each token representation is projected into:
+
+```text
+Q = X W_q
+K = X W_k
+V = X W_v
+Attention(X) = softmax(Q K^T / sqrt(d)) V W_o
+```
+
+`q_proj` changes what each token asks for. `k_proj` changes what each token advertises as matchable. `v_proj` changes what information gets carried forward when a token is attended to. `o_proj` mixes the attended result back into the model stream.
+
+So updating only `q_proj` and `v_proj` means the adapter can change:
+
+- which previous tokens a position tends to attend to;
+- what content is copied from attended tokens.
+
+But it leaves unchanged:
+
+- the key-side matching surface (`k_proj`);
+- the output mixing after attention (`o_proj`);
+- the MLP/FFN transformations that often store task features and nonlinear decision rules.
+
+## What Low Rank Means Here
+
+LoRA freezes the original matrix `W` and adds a low-rank update:
 
 ```text
 W' = W + Delta W
 Delta W = B A
 ```
 
-If `W` is `d_out x d_in`, then `A` is `r x d_in` and `B` is `d_out x r`. The rank `r` limits `Delta W` to at most `r` independent update directions. A small `r` says "only learn a narrow correction to the base model." A larger `r` says "allow more independent changes." That is the mechanism you need to defend.
+With rank `r=16`, the update has at most 16 independent directions per targeted matrix. This is meaningful because downstream adaptation often does not need a full dense update; the LoRA paper shows that useful task adaptation can be low-dimensional. But low rank is still a bottleneck. It can express a compact correction to Q/V behavior, not an arbitrary rewrite of the model.
 
-For your conversion engine, the right rank is not the one with the highest single benchmark score. It is the smallest rank that reaches a stable quality plateau on `tenacious-bench` without worsening latency, cost, or out-of-slice behavior.
+For your run, `r=16` could be enough to make the training prompts more likely under the SimPO objective while still not enough, or not in the right modules, to change the behaviors that the held-out rubric measures.
 
-## What Rank Actually Controls
+## Why Loss Can Fall While Held-Out Behavior Stays Flat
 
-Rank controls adapter capacity through factorization. Instead of learning every element of a full update matrix, LoRA learns two skinny matrices. The trainable parameter count for one adapted layer is approximately:
+Training loss measures whether the adapter is fitting the training objective. Held-out pass rate measures whether the adapted model changes externally visible behavior under a rubric.
 
-```text
-r * d_in + d_out * r = r * (d_in + d_out)
-```
+Those are related, but not identical.
 
-So doubling `r` roughly doubles adapter parameters for each targeted module. This gives you a clean production tradeoff:
+A Q/V-only adapter may learn to attend more strongly to phrasing patterns in the preference data. That can lower loss. But a multi-constraint task asks for more than local pattern pickup. It may require the model to:
 
-- rank too low: the adapter cannot represent enough task-specific update directions;
-- rank high enough: the adapter captures the useful conversion-engine behavior;
-- rank too high: extra capacity may memorize narrow training patterns without improving held-out behavior.
+- preserve multiple constraints at once;
+- reject unsupported claims;
+- balance rubric dimensions;
+- transform evidence into a calibrated judgment;
+- maintain instruction hierarchy across the full response.
 
-The LoRA paper argues that many adaptation updates are rank-deficient, meaning useful downstream changes often live in a much smaller subspace than the full model weights. That is why low ranks can work. But the paper does not tell you which rank is right for your task; your task distribution and benchmark must decide that.
+Those behaviors may depend on distributed circuits across attention and MLP layers. If only Q/V changed, the model may process training examples more efficiently without moving the final decision boundary enough to improve held-out pass rate.
 
-## Why This Matters for Your Week 10/11 Stack
+## Would K, O, or MLP Targets Matter?
 
-Your `tenacious-conversion-engine` has a production-shaped goal: make better conversion decisions across stages like `enrich -> compose -> qualify -> book -> sync`. A rank choice should therefore be defended against production slices, not just training loss.
+Potentially, yes.
 
-For example, rank `r=4` might be enough to improve generic email tone but too small to capture the distinction between "qualified but not ready" and "ready for booking." Rank `r=32` might improve one held-out score but overfit recurring phrasing from the training set. The question is not "which rank is biggest?" It is "which rank buys reliable task behavior per added adapter capacity?"
+Adding `k_proj` lets the adapter change both sides of attention matching: what tokens ask for and what tokens match. Adding `o_proj` lets it alter how attended information is mixed back into the residual stream. Adding MLP/FFN layers gives the adapter access to nonlinear feature transformations, which may matter more for rubric compliance than attention routing alone.
 
-## Minimal Experiment to Justify `r = X`
+That does not mean "always target everything." It means Q/V-only should be treated as a footprint-saving hypothesis, not a defended default.
 
-Run a controlled rank sweep with everything except rank held constant:
+## Minimal Experiment
 
-```text
-r in [2, 4, 8, 16, 32]
-same base model
-same target_modules
-same train/validation split
-same training steps
-same lora_alpha policy
-same decoding settings
-same tenacious-bench tasks
-```
-
-For each rank, log:
-
-- `adapter_params`: trainable adapter parameter count;
-- `train_loss` and `validation_loss`;
-- `tenacious_bench_score`: overall task quality;
-- stage-level scores: compose quality, qualification accuracy, booking decision accuracy;
-- latency and cost per task in the inference path you actually deploy;
-- failure slices: hallucinated personalization, wrong stage decision, weak booking handoff.
-
-Then choose the smallest rank that satisfies this rule:
+Run a module-set ablation with rank and training budget fixed:
 
 ```text
-Pick the lowest r whose tenacious-bench score is within 1-2% of the best rank,
-whose stage-level failures do not regress on critical slices,
-and whose adapter size / serving cost is lower than higher-rank alternatives.
+A: q_proj, v_proj
+B: q_proj, k_proj, v_proj, o_proj
+C: q_proj, k_proj, v_proj, o_proj + FFN/MLP projections
 ```
 
-That turns `r = X` into an FDE decision: quality plateau plus operational efficiency, not vibes.
+Keep `r=16`, `alpha=32`, data split, training steps, decoding, and evaluation fixed. Compare:
 
-## How to Interpret Outcomes
+- training loss curve;
+- held-out pass rate;
+- per-dimension rubric scores;
+- failure types that remain unchanged.
 
-If quality rises from `r=2` to `r=8` and then flattens, `r=8` is probably the defensible choice. Higher ranks are adding capacity the task does not need.
-
-If validation loss improves but `tenacious-bench` stage decisions get worse, the adapter may be fitting the training objective without improving the deployed workflow. That is an objective/data problem, not proof that higher rank is better.
-
-If low rank performs well overall but fails one critical slice, such as booking readiness, inspect whether the missing behavior is rare in training data. A higher rank cannot reliably learn evidence it barely sees.
-
-## What Is Scoped Out
-
-This explainer does not choose your final rank directly because the answer depends on your actual benchmark curve. It also does not compare LoRA to full fine-tuning, DPO, or prompt-only tuning. The narrow goal is to make rank defensible inside your existing LoRA setup.
+If all settings lower loss but only B or C improves held-out pass rate, module selection was binding. If none improve pass rate, the issue is more likely data, objective, model scale, or rubric/task mismatch.
 
 ## Bottom Line
 
-LoRA rank controls the maximum dimensionality of the learned weight update. In production terms, it controls how much task-specific correction your adapter can express per adapted layer. To justify `r = X`, run a rank sweep on `tenacious-bench`, measure quality by stage, measure latency/cost in the deployed path, and pick the smallest rank on the quality plateau that does not regress critical slices. That is the difference between "we tried a rank and it worked" and "we chose this rank because the mechanism and evidence both support it."
+Q/V LoRA changes how the model routes attention and what content attention carries forward. That can be a real update and still fail to change multi-constraint behavior. For a rubric-compliance task, module selection is part of the hypothesis: Q/V-only may be too narrow if the needed behavior lives in key matching, output mixing, or MLP feature transformations. The next defensible step is not guessing a bigger rank; it is a controlled module-target ablation.
 
 ## Sources
 
 1. Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models." arXiv:2106.09685.  
    https://arxiv.org/abs/2106.09685
 
-2. Hugging Face PEFT documentation, `LoraConfig` and LoRA conceptual guide.  
+2. Hugging Face PEFT LoRA documentation, especially `r` and `target_modules`.  
    https://huggingface.co/docs/peft/package_reference/lora

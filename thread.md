@@ -1,13 +1,13 @@
-# Day 3 Thread - LoRA Rank as a Production Decision
+# Day 3 Thread - Why Q/V LoRA Can Lower Loss Without Changing Behavior
 
-1. I used to treat LoRA rank (`r`) like a training knob: try a value, check the score, move on. The gap I closed today is that rank is not just a knob. It is the capacity limit on the adapter update.
+1. Mistire's LoRA run has the kind of result that looks confusing at first: training loss fell from `0.97` to `0.37`, but held-out pass rate stayed flat at `14.6%`. The adapter learned something, but the rubric behavior did not move.
 
-2. Mechanically, LoRA freezes the base weight `W` and learns a low-rank update: `W' = W + BA`. If `A` is `r x d_in` and `B` is `d_out x r`, then rank `r` limits how many independent update directions the adapter can learn.
+2. The key is module selection. Updating `q_proj` changes what each token asks to attend to. Updating `v_proj` changes what content gets carried forward from attended tokens. That affects attention routing and attended content.
 
-3. That gives the production tradeoff. Rank too low can miss task-specific behavior. Rank high enough captures the useful correction. Rank too high can add capacity without improving held-out workflow quality.
+3. But Q/V-only LoRA does not directly change `k_proj`, `o_proj`, or the MLP layers. So it may not move the parts of the model most responsible for key matching, output mixing, nonlinear feature transforms, or final rubric-compliance behavior.
 
-4. For my conversion engine, the defensible choice is not "highest benchmark score." It is the smallest rank that reaches a stable quality plateau on `tenacious-bench` without regressing latency, cost, or critical slices like qualification and booking decisions.
+4. Low rank is meaningful because LoRA learns `Delta W = BA`: a compact update with limited directions. Rank 16 can express useful local corrections, but it is still constrained by both rank and target module.
 
-5. The minimal experiment: train ranks `[2, 4, 8, 16, 32]` with the same base model, data split, target modules, steps, and decoding settings. Then compare quality, adapter size, latency, cost, and stage-level failures.
+5. That explains the split: training loss can fall if Q/V updates fit patterns in the training examples, while held-out pass rate stays flat if the task needs broader changes for constraint following, refusal, evidence discipline, or scoring consistency.
 
-6. The main FDE lesson: a rank choice should be an evidence-backed deployment decision. "We used `r=8`" is not enough. I need to be able to say what capacity it allowed, where quality plateaued, and what higher rank failed to buy.
+6. The next experiment is not just "increase rank." Compare module sets at fixed rank: `q,v` vs `q,k,v,o` vs `q,k,v,o + MLP`. If wider targets improve held-out rubric scores, module selection was binding. If not, look at data, objective, or model scale.

@@ -1,14 +1,14 @@
 # Day 3 - signoff.md
 
-**Asker:** Gersum Asfaw  
-**Explainer:** Mistire Daniel  
+**Asker:** Mistire Daniel  
+**Explainer:** Gersum Asfaw  
 **Topic:** Training and post-training mechanics  
-**Gap:** LoRA rank as a defensible production decision
+**Gap:** Why Q/V-only LoRA can lower training loss without improving held-out rubric behavior
 
 ---
 
 ## Gap Status: CLOSED
 
-Before this explainer, I understood LoRA rank as a rough capacity hyperparameter, but I could not explain what it constrained mathematically or how I would defend a chosen `r` in a production review. I now understand that LoRA freezes the base weights and learns a low-rank update `Delta W = BA`, where rank `r` limits the number of independent update directions the adapter can express. That makes rank a capacity and efficiency decision, not just a training setting.
+Before this explainer, the confusing part was that the SimPO adapter clearly learned something because training loss fell, but the held-out pass rate did not move. I now understand that this can happen because `q_proj` and `v_proj` LoRA mainly changes attention routing and attended content. It does not directly update key matching, output mixing, or MLP feature transformations.
 
-The explainer closed the gap because it gave me a concrete decision rule: run a controlled rank sweep on `tenacious-bench`, hold all other training variables fixed, measure quality by stage plus latency/cost, and choose the smallest rank on the quality plateau that does not regress critical slices. I can now explain how rank connects to under-capacity, over-capacity, adapter size, and deployment tradeoffs in my Week 10/11 conversion-engine work.
+The gap is closed because I can now explain the result mechanistically: Q/V-only rank-16 LoRA may fit training-example patterns while failing to move the broader constraint-following behavior measured by the rubric. The next defensible experiment is a fixed-rank module ablation: compare `q,v`, `q,k,v,o`, and `q,k,v,o + MLP` while holding data, rank, alpha, training budget, and evaluation constant.

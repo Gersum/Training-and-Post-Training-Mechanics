@@ -1,22 +1,20 @@
-# Day 3 — morning_call_summary.md
+# Day 3 - morning_call_summary.md
 
 ## What Was Ambiguous in the Original Draft
 
-My initial draft asked, "what LoRA rank should I use?" but that was too shallow and not diagnostic enough. It treated rank as a hyperparameter lookup problem, not a mechanism-level engineering gap. I also had not tied the question tightly to my shipped Week 10/11 artifact, so it could read like a generic ML question rather than an FDE defensibility issue.
+Mistire's original concern started as "my LoRA adapter trained, but held-out pass rate did not improve." That was real, but still too broad. It could have been blamed on model size, SimPO setup, data quality, rank, or evaluation noise. The morning call sharpened the gap toward a specific mechanism: whether targeting only `q_proj` and `v_proj` constrained what the adapter could express.
 
-## How the Question Was Sharpened in the Call
+## How the Question Was Sharpened
 
-My partner pushed me to separate three things clearly: (1) what LoRA rank changes mathematically, (2) how that change appears in deployment tradeoffs (quality, stability, latency/cost), and (3) what concrete evidence would justify one rank over another in my own stack. We reframed the ask from "recommend a rank" to "give a decision framework I can defend under scrutiny."
+Gersum pushed Mistire to separate two facts: training loss fell (`0.97 -> 0.37`), but held-out pass rate stayed flat (`14.6% -> 14.6%`). That distinction made the question diagnostic: the adapter optimized something, but the optimized behavior did not transfer to the multi-constraint rubric. The final question now asks what Q/V LoRA changes inside attention and whether missing `k_proj`, `o_proj`, or MLP targets could explain the flat behavioral result.
 
-We also tightened grounding by explicitly connecting the gap to my conversion-engine trained component, model-card claims, and deployment recommendations. That made the question portfolio-linked rather than abstract.
+The question was also grounded more tightly in artifacts: `methodology_rationale.md` for the Q/V module choice, `ablations/training_run.json` for the loss curve, and `model_card.md` for the flat held-out result. That makes the question answerable in one explainer while still generalizing to any FDE choosing LoRA target modules.
 
-## Final Sharpened Question (One Line)
+## Final Sharpened Question
 
-For my Week 10/11 conversion-engine trained component, how does LoRA rank change learnable capacity and production tradeoffs, and what minimal evidence should I collect to defend a specific rank choice as an FDE decision rather than trial-and-error?
+What does LoRA adapt when it targets `q_proj` and `v_proj`, and why might that reduce training loss while leaving held-out multi-constraint rubric behavior unchanged?
 
 ## Attestation
 
-This summary reflects a real sharpening process from a broader draft to a specific, defensible, artifact-grounded final question.
-
-Confirmed by: Gersum Asfaw / Mistire Daniel  
+Confirmed by: Mistire Daniel / Gersum Asfaw  
 Date: _______________________
